@@ -466,15 +466,18 @@ class Gaussian:
         #p_loss = (p_loss * extract(self.loss_weight, t, p_loss.shape)).mean()
         return p_loss
 
-    def __call__(self, key, state, params, img , self_cond):
+    def __call__(self, key, state, params, img , self_cond,k_step=None):
         # input image will be normalized by mean(default as 0) and std(default as 1)
         # if mean=0 and std=1 img=normalize(image)
         #img = self.normalize(img)
         img = self.norm_spec(img)
-
+        if(k_step==None):
+            k_step_max=self.num_timesteps
+        else:
+            k_step_max=k_step
         key_times, key_noise = jax.random.split(key, 2)
         b, *_ = img.shape
-        t = jax.random.randint(key_times, (b,), minval=0, maxval=self.num_timesteps)
+        t = jax.random.randint(key_times, (b,), minval=0, maxval=k_step_max)
 
         return self.p_loss(key_noise, state, params, img, t , self_cond)
 
