@@ -4,7 +4,7 @@ from diff_extend.train_combine import train
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('-c', '--config', type=str, default="configs/base.yaml",
+    parser.add_argument('-c', '--config', type=str, default="configs/big.yaml",
                         help="yaml file for configuration")
     parser.add_argument('-p', '--checkpoint_path', type=str, default=None,
                         help="path of checkpoint pt file to resume training")

@@ -1,13 +1,19 @@
 train:
-  model: "diffusion-svc"
+  mode: "torch" # torch or jax
+  model: "sovits"
   seed: 1234
   epochs: 1000000
-  learning_rate: 1e-5
+  learning_rate: 5e-6
   betas: [0.9, 0.99]
   lr_decay: 0.999875
-  total_steps: 30 # for lr exponential decay
+  total_steps: 30 # base on dataset size
   eps: 1e-9
   batch_size: 128
+  c_stft: 9
+  c_mel: 1.
+  c_kl: 0.2
+  port: 8001
+  pretrain: ""
 #############################
 data: 
   training_files: "files/train.txt"
@@ -49,14 +55,15 @@ log:
   pth_dir: 'chkpt'
   log_dir: 'logs'
 model_diff:
-  n_layers: 20
+  n_layers: 40
   n_chans: 512
-  n_hidden: 256
+  n_hidden: 512
   use_pitch_aug: true  
   n_spk: 1 # max number of different speakers
 model_naive:
-  n_layers: 3
-  n_chans: 256
+  n_layers: 6
+  n_chans: 512
+  n_hidden: 512
   use_pitch_aug: true  
   n_spk: 1 # max number of different speakers
 model:
@@ -74,3 +81,5 @@ Gaussian:
   scale_factor: 1
   noise_type: 'normal'
   self_condition: True
+shallow:
+  k_step_max: 100

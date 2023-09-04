@@ -95,7 +95,7 @@ def train(args,chkpt_path, hp):
         fake_mel = fake_mel.transpose(0,2,1)
         spec = spec.transpose(0,2,1)
         def diff_loss_fn(params):
-            loss_diff = diff(rng_e, wavenet_state, params, spec, fake_mel)
+            loss_diff = diff(rng_e, wavenet_state, params, spec, fake_mel,hp.shallow.k_step_max)
             return loss_diff
         
         # # Generate data with the Generator, critique it with the Discriminator.
