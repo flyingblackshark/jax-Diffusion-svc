@@ -87,7 +87,6 @@ def train(args,chkpt_path, hp):
 
         grad_fn = jax.value_and_grad(naive_loss_fn, has_aux=True)
         (loss_naive,fake_mel), grads_naive = grad_fn(naive_state.params)
-        # Average across the devices.
         grads_naive = jax.lax.pmean(grads_naive, axis_name='num_devices')
         loss_naive = jax.lax.pmean(loss_naive, axis_name='num_devices')
 
@@ -98,14 +97,11 @@ def train(args,chkpt_path, hp):
             loss_diff = diff(rng_e, wavenet_state, params, spec, fake_mel,hp.shallow.k_step_max)
             return loss_diff
         
-        # # Generate data with the Generator, critique it with the Discriminator.
         grad_fn = jax.value_and_grad(diff_loss_fn, has_aux=False)
         loss_diff, grads_diff = grad_fn(wavenet_state.params)
-        # Average cross the devices.
         grads_diff = jax.lax.pmean(grads_diff, axis_name='num_devices')
         loss_diff = jax.lax.pmean(loss_diff, axis_name='num_devices')
 
-        # # Update the discriminator through gradient descent.
         new_wavenet_state = wavenet_state.apply_gradients(grads=grads_diff)
         return new_naive_state,new_wavenet_state,loss_naive,loss_diff
     @partial(jax.pmap, axis_name='num_devices')         
@@ -147,7 +143,6 @@ def train(args,chkpt_path, hp):
     
     init_epoch = 1
     step = 0
-    #if rank == 0:
     pth_dir = os.path.join(hp.log.pth_dir, args.name)
     log_dir = os.path.join(hp.log.log_dir, args.name)
     os.makedirs(pth_dir, exist_ok=True)
