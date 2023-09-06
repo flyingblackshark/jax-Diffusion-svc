@@ -211,9 +211,9 @@ class Gaussian:
     def model_predictions(self, x, t=None, x_self_cond=None, state=None, rederive_pred_noise=False, *args, **kwargs):
         # model_output = model_predict(state, x, t, x_self_cond)
         #if self.train_state:
-        model_output = model_predict(state, x, t, x_self_cond)
+        #model_output = model_predict(state, x, t, x_self_cond)
         # else:
-        #     model_output = model_predict_ema(state, x, t, x_self_cond)
+        model_output = model_predict_ema(state, x, t, x_self_cond)
 
         clip_x_start = self.clip_x_start
         maybe_clip = partial(jnp.clip, a_min=-1., a_max=1.) if clip_x_start else identity

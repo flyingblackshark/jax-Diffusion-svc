@@ -82,4 +82,4 @@ Gaussian:
   noise_type: 'normal'
   self_condition: True
 shallow:
-  k_step_max: 100
+  k_step_max: 200

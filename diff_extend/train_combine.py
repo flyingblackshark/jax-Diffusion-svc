@@ -12,12 +12,22 @@ from diff_extend.writer import MyWriter
 import jax.numpy as jnp
 import orbax.checkpoint
 from functools import partial
-from flax.training.train_state import TrainState
+from flax.training import train_state
 from flax.training.common_utils import shard, shard_prng_key
 from flax.training import orbax_utils
 from diffusion.naive import Unit2MelNaive
 from diffusion.gaussian import Gaussian
 from diffusion.wavenet import WaveNet
+from typing import Any
+
+class EMATrainState(train_state.TrainState):
+    ema_params: Any = None
+
+@partial(jax.pmap, )
+def update_ema(state, ema_decay=0.999, ):
+    new_ema_params = jax.tree_map(lambda ema, normal: ema * ema_decay + (1 - ema_decay) * normal, state.ema_params , state.params)
+    state = state.replace(ema_params=new_ema_params)
+    return state
 
 PRNGKey = jnp.ndarray
 def create_naive_state(rng, model_cls,hp,trainloader): 
@@ -46,7 +56,7 @@ def create_naive_state(rng, model_cls,hp,trainloader):
     inputs = (i1,i2,i3)
     variables = model.init(init_rngs, *inputs)
 
-    state = TrainState.create(apply_fn=model.apply, tx=tx, params=variables['params'])
+    state = EMATrainState.create(apply_fn=model.apply, tx=tx, params=variables['params'], ema_params=variables['params'])
     
     return state
 def create_wavenet_state(rng, model_cls,hp,trainloader): 
@@ -66,7 +76,7 @@ def create_wavenet_state(rng, model_cls,hp,trainloader):
 
     variables = model.init(rng, *inputs)
 
-    state = TrainState.create(apply_fn=model.apply, tx=tx,params=variables['params'])
+    state = EMATrainState.create(apply_fn=model.apply, tx=tx,params=variables['params'], ema_params=variables['params'])
     
     return state
 def train(args,chkpt_path, hp):
@@ -74,7 +84,7 @@ def train(args,chkpt_path, hp):
     gaussian_config = hp['Gaussian']
     diff = Gaussian(**gaussian_config)
     @partial(jax.pmap, axis_name='num_devices')
-    def combine_step(naive_state: TrainState,wavenet_state: TrainState, ppg : jnp.ndarray , pit : jnp.ndarray,spec : jnp.ndarray, vol:jnp.ndarray,rng_e:PRNGKey):
+    def combine_step(naive_state: EMATrainState,wavenet_state: EMATrainState, ppg : jnp.ndarray , pit : jnp.ndarray,spec : jnp.ndarray, vol:jnp.ndarray,rng_e:PRNGKey):
         ppg = jnp.asarray(ppg)
         pit = jnp.asarray(pit)
         spec = jnp.asarray(spec)
@@ -105,11 +115,11 @@ def train(args,chkpt_path, hp):
         new_wavenet_state = wavenet_state.apply_gradients(grads=grads_diff)
         return new_naive_state,new_wavenet_state,loss_naive,loss_diff
     @partial(jax.pmap, axis_name='num_devices')         
-    def generate_hidden(naive_state: TrainState,ppg_val:jnp.ndarray,pit_val:jnp.ndarray,vol_val:jnp.ndarray):
+    def generate_hidden(naive_state: EMATrainState,ppg_val:jnp.ndarray,pit_val:jnp.ndarray,vol_val:jnp.ndarray):
         predict_key = jax.random.PRNGKey(1234)
         hidden = naive_state.apply_fn({'params': naive_state.params},ppg=ppg_val, f0=pit_val,volume=vol_val,infer=True, mutable=False,rngs={'rnorms':predict_key})
         return hidden
-    def do_validate(wavenet_state:TrainState,hidden:jnp.ndarray,spec_val:jnp.ndarray):   
+    def do_validate(wavenet_state:EMATrainState,hidden:jnp.ndarray,spec_val:jnp.ndarray):   
         spec_val=spec_val.transpose(0,2,1)
         mel_fake = diff.sample(key, wavenet_state,hidden )
         mel_loss_val = jnp.mean(jnp.abs(mel_fake - spec_val))
@@ -188,9 +198,13 @@ def train(args,chkpt_path, hp):
             pit = shard(jnp.asarray(data['f0']))
             spec = shard(jnp.asarray(data['mel']))
             vol = shard(jnp.asarray(data['volume']))
-            naive_state,wavenet_state,loss_naive,loss_diff=\
-            combine_step(naive_state,wavenet_state,ppg=ppg,pit=pit, spec=spec,vol=vol,rng_e=step_key)
-
+            naive_state,wavenet_state,loss_naive,loss_diff=combine_step(naive_state,wavenet_state,ppg=ppg,pit=pit, spec=spec,vol=vol,rng_e=step_key)
+            # EMA
+            decay = min(0.9999, (1 + step) / (10 + step))
+            decay = flax.jax_utils.replicate(jnp.array([decay]))
+            naive_state = update_ema(naive_state, decay)
+            wavenet_state = update_ema(wavenet_state, decay)
+            # Update Step
             step += 1
 
             loss_naive,loss_diff = jax.device_get([loss_naive[0],loss_diff[0]])
