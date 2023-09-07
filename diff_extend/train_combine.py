@@ -92,14 +92,16 @@ def train(args,chkpt_path, hp):
         
         def naive_loss_fn(params):
             fake_mel = naive_state.apply_fn({'params': params},ppg=ppg,f0=pit,volume=vol,gt_spec=spec,infer=False,rngs={'rnorms':rng_e})
+            fake_mel_ema = naive_state.apply_fn({'params': naive_state.ema_params},ppg=ppg,f0=pit,volume=vol,gt_spec=spec,infer=False,rngs={'rnorms':rng_e})
             loss_naive = optax.squared_error(fake_mel, spec).mean()
-            return loss_naive,fake_mel
+            loss_naive_ema = optax.squared_error(fake_mel_ema, spec).mean()
+            return loss_naive,(fake_mel,loss_naive_ema)
 
         grad_fn = jax.value_and_grad(naive_loss_fn, has_aux=True)
-        (loss_naive,fake_mel), grads_naive = grad_fn(naive_state.params)
+        (loss_naive,(fake_mel,loss_naive_ema)), grads_naive = grad_fn(naive_state.params)
         grads_naive = jax.lax.pmean(grads_naive, axis_name='num_devices')
         loss_naive = jax.lax.pmean(loss_naive, axis_name='num_devices')
-
+        loss_naive_ema = jax.lax.pmean(loss_naive_ema, axis_name='num_devices')
         new_naive_state = naive_state.apply_gradients(grads=grads_naive)
         fake_mel = fake_mel.transpose(0,2,1)
         spec = spec.transpose(0,2,1)
@@ -113,7 +115,7 @@ def train(args,chkpt_path, hp):
         loss_diff = jax.lax.pmean(loss_diff, axis_name='num_devices')
 
         new_wavenet_state = wavenet_state.apply_gradients(grads=grads_diff)
-        return new_naive_state,new_wavenet_state,loss_naive,loss_diff
+        return new_naive_state,new_wavenet_state,loss_naive,loss_diff,loss_naive_ema
     @partial(jax.pmap, axis_name='num_devices')         
     def generate_hidden(naive_state: EMATrainState,ppg_val:jnp.ndarray,pit_val:jnp.ndarray,vol_val:jnp.ndarray):
         predict_key = jax.random.PRNGKey(1234)
@@ -198,7 +200,7 @@ def train(args,chkpt_path, hp):
             pit = shard(jnp.asarray(data['f0']))
             spec = shard(jnp.asarray(data['mel']))
             vol = shard(jnp.asarray(data['volume']))
-            naive_state,wavenet_state,loss_naive,loss_diff=combine_step(naive_state,wavenet_state,ppg=ppg,pit=pit, spec=spec,vol=vol,rng_e=step_key)
+            naive_state,wavenet_state,loss_naive,loss_diff,loss_ema=combine_step(naive_state,wavenet_state,ppg=ppg,pit=pit, spec=spec,vol=vol,rng_e=step_key)
             # EMA
             decay = min(0.9999, (1 + step) / (10 + step))
             decay = flax.jax_utils.replicate(jnp.array([decay]))
@@ -207,12 +209,12 @@ def train(args,chkpt_path, hp):
             # Update Step
             step += 1
 
-            loss_naive,loss_diff = jax.device_get([loss_naive[0],loss_diff[0]])
+            loss_naive,loss_diff,loss_ema = jax.device_get([loss_naive[0],loss_diff[0],loss_ema[0]])
             
             if step % hp.log.info_interval == 0:
                 # writer.log_training(
                 #     loss_g, loss_d, loss_m, loss_s, loss_k, loss_r, score_loss,step)
-                logger.info("loss_naive %.04f loss_diff %.04f  | step %d" % (loss_naive,loss_diff, step))
+                logger.info("loss_naive %.04f loss_diff %.04f loss_ema %.04f | step %d" % (loss_naive,loss_diff,loss_ema, step))
                 
         if epoch % hp.log.eval_interval == 0:
             validate(naive_state,wavenet_state)
